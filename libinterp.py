@@ -2,7 +2,73 @@
 import re
 import os
 import math
-from decimal import Decimal
+from decimal import Decimal, getcontext, ROUND_05UP
+
+getcontext().rounding = ROUND_05UP
+
+meta_lambda = [
+    'define',
+    'update',
+
+    'cond',
+    'eq',
+    'lambda',
+    'progn',
+    'if',
+    'input',
+    'output',
+    'apply',
+    'quote',
+    'import',
+    'let',
+    'eval',
+    'type',
+    'pass',
+    'assert',
+    'meta',
+    'lookup',
+    'defined',
+    'exit',
+
+    'get',
+    'set',
+    'insert',
+    'remove',
+    'length',
+    'copy',
+
+    'and',
+    'or',
+    'not',
+
+    'split',
+    'join',
+    'encode',
+    'decode',
+    'string',
+
+    'gt',
+    'lt',
+    'add',
+    'sub',
+    'mul',
+    'div',
+    'mod',
+    'floor',
+    'ceil',
+    'trunc',
+    'round',
+    'exp',
+    'log',
+    'sqrt',
+    'sin',
+    'cos',
+    'tan',
+    'asin',
+    'acos',
+    'atan',
+    'number',
+]
 
 class Node:
     def __init__(self, text=None, ln=None, col=None):
@@ -66,10 +132,10 @@ class Node:
         elif self.type is NoneType:
             self.expr = '#none'
         elif self.type is LambdaType:
-            if self.value in meta_lambda:
-                self.expr = self.value
-            else:
+            if self.value == '__lambda__':
                 self.expr = '(lambda %s %s)' % (self[0].get_expr(), self[1].get_expr())
+            else:
+                self.expr = self.value
         elif self.type is EvalType:
             fragments = []
             for sub_node in self:
@@ -129,7 +195,10 @@ class Stack:
 
 class Env:
     def __init__(self, parent=None):
-        self.parent = parent
+        if parent is None:
+            self.parent = env_root
+        else:
+            self.parent = parent
         self.items = {}
 
     def lookup(self, name):
@@ -155,67 +224,10 @@ class Env:
         else:
             return False
 
-meta_lambda = [
-    'define',
-    'update',
-
-    'cond',
-    'eq',
-    'lambda',
-    'progn',
-    'if',
-    'input',
-    'output',
-    'apply',
-    'quote',
-    'import',
-    'let',
-    'eval',
-    'type',
-    'pass',
-    'assert',
-    'meta',
-    'exit',
-
-    'get',
-    'set',
-    'insert',
-    'remove',
-    'length',
-    'copy',
-
-    'and',
-    'or',
-    'not',
-
-    'split',
-    'join',
-    'encode',
-    'decode',
-    'string',
-
-    'gt',
-    'lt',
-    'add',
-    'sub',
-    'mul',
-    'div',
-    'mod',
-    'floor',
-    'ceil',
-    'trunc',
-    'round',
-    'exp',
-    'log',
-    'sqrt',
-    'sin',
-    'cos',
-    'tan',
-    'asin',
-    'acos',
-    'atan',
-    'number',
-]
+class EnvRoot(Env):
+    def __init__(self):
+        self.items = {}
+        self.parent = None
 
 TypeType = Node().set_value(':type')
 TypeType.set_type(TypeType)
@@ -239,9 +251,10 @@ NodeNone = Node().set_type(NoneType).set_value(None)
 
 AtomicTypes = [NumberType, StringType, BoolType, NoneType, LambdaType, ErrorType, TypeType]
 
-meta_lambda_dict = {}
+env_root = EnvRoot()
+env_root.parent = None
 for __lambda in meta_lambda:
-    meta_lambda_dict[__lambda] = Node().set_type(LambdaType).set_value(__lambda)
+    env_root.define(__lambda, Node().set_type(LambdaType).set_value(__lambda))
 
 def CreateLambdaNode(params, expr, env):
     return Node().set_type(LambdaType).set_value('__lambda__').set_sub_nodes([params, expr, env])
@@ -463,13 +476,8 @@ def Eval(node, env):
 
     if node_type is SymbolType:
         retval = env.lookup(node.value)
-        if retval is None:
-            if node.value in meta_lambda:
-                retval = meta_lambda_dict[node.value]
-            else:
-                check(False, 'error, name %s not exist.' % (node.value, ))
-        else:
-            pass
+        check(retval is not None, 'error, name %s not exist.' % (node.value, ))
+
 
     elif node_type in AtomicTypes:
         retval = node
@@ -669,6 +677,21 @@ def Eval(node, env):
             assert lambda_node.type is LambdaType, '(): 參數1 須為 :lambda 類型'
             retval = CreateStringNode(meta(lambda_node, env))
 
+        elif op == 'lookup':
+            p = Eval(L[0], env)
+            check(p.type is StringType, '(lookup) need one :string as param.')
+            retval = env.lookup(p.value)
+            check(retval is not None, '(lookup) name %s undefined' % (p.value,))
+
+        elif op == 'defined':
+            p = Eval(L[0], env)
+            check(p.type is StringType, '(defined) need one :string as param.')
+            val = env.lookup(p.value)
+            if val is None:
+                retval = CreateBoolNode(False)
+            else:
+                retval = CreateBoolNode(True)
+
         elif op == 'exit':
             exit()
 
@@ -810,9 +833,11 @@ def Eval(node, env):
 
         elif op == 'round':
             p = Eval(L[0], env)
+            n = Eval(L[1], env)
             assert p.type is NumberType, '(round): 參數1 須為 :number 類型'
+            assert n.type is NumberType, '(round): 參數1 須為 :number 類型'
 
-            retval = CreateNumberNode(round(p.value))
+            retval = CreateNumberNode(round(p.value, int(n.value)))
 
         elif op == 'trunc':
             p = Eval(L[0], env)

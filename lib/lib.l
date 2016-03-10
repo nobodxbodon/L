@@ -182,21 +182,29 @@
 
 
 {"dict"}
+(define dict (lambda [] #args))
+
 (define dict-get (lambda [L key] ((lambda [L] (cond
     [(eq L []) #none]
     [(eq key (caar L)) (get (car L) 2)]
     [#true (#lambda (cdr L))]
 )) L)))
 
-(define dict-set (lambda [L key value] ((lambda [L] (cond
+(define dict-update (lambda [L key value] ((lambda [L] (cond
     [(eq L []) #none]
     [(eq key (caar L)) (set (car L) 2 value)]
     [#true (#lambda (cdr L))]
 )) L)))
 
+(define dict-set (lambda [D name value] (if (eq (dict-update D name value) #none) (insert D 1 [name value]))))
+
+(define dict-walk (lambda [Fn D] 
+    (map (lambda [item] (Fn (car item) (cadr item))) D)
+))
+
 (define dict-keys pass)
 (define dict-values pass)
-(define dict-add pass)
+
 (define dict-del pass)
 (define dict-length pass)
 
@@ -345,7 +353,6 @@
     )) #args)
 )))
 (define pair zip)
-(define dict zip)
 
 (define array (lambda [L] (zip (range (length L)) L)))
 (define enumerate array)
