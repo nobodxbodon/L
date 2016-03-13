@@ -2,7 +2,7 @@
 (import "lib.l")
 
 (define point (lambda [x y] [x y]))
-(define point? (lambda [P] (eq (type-type P) [:number :number])))
+(define point? (lambda [P] (eq (type* P) [:number :number])))
 (define point-set-x (lambda [P n] (set P 1 n)))
 (define point-get-x (lambda [P] (get P 1)))
 (define point-set-y (lambda [P n] (set P 2 n)))

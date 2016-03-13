@@ -2,7 +2,7 @@
 
 {"LISP"}
 (define car  (lambda [L] (get L 1)))
-(define cdr  (lambda [L] (remove (copy L) 1)))
+(define cdr  (lambda [L] (delete (copy L) 1)))
 (define cons (lambda [e L] (insert (copy L) 1 e)))
 (define atom (lambda [A] (not (list? A))))
 
@@ -60,7 +60,7 @@
 (define postive? (lambda [x] (>= x 0)))
 
 (define number? (lambda [v] (eq (type v) :number)))
-(define bool? (lambda [v] (eq (type v) :boolean)))
+(define bool? (lambda [v] (eq (type v) :bool)))
 (define none? (lambda [v] (eq (type v) :none)))
 (define error? (lambda [v] (eq (type v) :error)))
 (define lambda? (lambda [v] (eq (type v) :lambda)))
@@ -182,6 +182,7 @@
 
 
 {"dict"}
+
 (define dict (lambda [] #args))
 
 (define dict-get (lambda [L key] ((lambda [L] (cond
@@ -204,16 +205,16 @@
 
 (define dict-keys pass)
 (define dict-values pass)
+(define dict-items (lambda [D] D))
 
-(define dict-del pass)
-(define dict-length pass)
+(define dict-delete (lambda [D k] (pass)))
+(define dict-length (lambda [D] (length D)))
 
 (define dict? (lambda [L] (all (foreach (lambda [e] (and (list? e) (length-eq e 2))) L))))
 
 {"type"}
 
-
-(define type-type (lambda [L] ((lambda [L] (if
+(define type* (lambda [L] (if
     (atom? L)
     (type L)
     ((lambda [L] (cond
@@ -221,7 +222,21 @@
         [(list? (car L)) (cons (#lambda (car L)) (#lambda (cdr L)))]
         [#true (cons (type (car L)) (#lambda (cdr L)))]
     )) L)
-))L)))
+)))
+
+(define match (lambda [E1 E2] (cond
+    [(atom? E2) (E2 E1)]
+    [(and (list? E1) (list? E2)) ((lambda [L1 L2] (cond
+        [(and (empty? L1) (empty? L2)) #true]
+        [(not-eq (length L1) (length L2)) #false]
+        [(atom? (car L2)) (and ((car L2) (car L1)) (#lambda (cdr L1) (cdr L2)))]
+        [(list? (car L2)) (if (list? (car L1)) (and (#lambda (car L1) (car L2)) (#lambda (cdr L1) (cdr L2))) #false)]
+        [#true #false]
+    )) E1 E2)]
+    [#true #false]
+)))
+
+
 
 {"qsort"}
 (define qsort0 (lambda [L Fn] (cond
@@ -361,7 +376,7 @@
 
 
 (define push (lambda [e L] (insert L 1 e)))
-(define pop (lambda [L] (remove L 1)))
+(define pop (lambda [L] (delete L 1)))
 (define append (lambda [L e] (insert L (inc (length L)) e)))
 (define push0 (lambda [e L] (push e (dup L))))
 (define pop0 (lambda [L] (pop (dup L))))
@@ -373,10 +388,10 @@
 )))
 
 (define swift-+ (lambda [a b] (cond
-    [(and (eq (type a) :string) (eq (type b) :string)) (concat a b)]
+    [(and (eq (type a) :string) (eq (type b) :string)) (strcat a b)]
     [(and (eq (type a) :number) (eq (type b) :number)) (add a b)]
-    [(or  (eq (type a) :string) (eq (type b) :string)) (concat (string a) (string b))]
-    [#true (error 0)]
+    [(or  (eq (type a) :string) (eq (type b) :string)) (strcat (string a) (string b))]
+    [#true #false]
 )))
 
 
@@ -401,6 +416,8 @@
 ))))
 
 {"string"}
+
+(define strcat (lambda [] (join #args)))
 
 (define low-case (lambda [S] (unichar ((lambda [L] (cond
     [(eq L []) []]
@@ -435,7 +452,7 @@
 
 {"bool"}
 (define xor (lambda [a b] (cond
-    [(or (not-eq (type a) :boolean) (not-eq (type b) :boolean)) (error 0)]
+    [(or (not-eq (type a) :bool) (not-eq (type b) :bool)) (error 0)]
     [#true (cond
         [(eq a b) #false]
         [#true #true]

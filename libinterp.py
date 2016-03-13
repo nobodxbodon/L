@@ -33,7 +33,7 @@ meta_lambda = [
     'get',
     'set',
     'insert',
-    'remove',
+    'delete',
     'length',
     'copy',
 
@@ -84,7 +84,7 @@ class Node:
         if self.type is not other.type:
             return False
         elif self.type is LambdaType:
-            return self.expr == other.get_expr
+            return False
         elif self.type is ListType:
             if self.get_length() != other.get_length():
                 return False
@@ -448,12 +448,12 @@ def Parse(nodes):
                 elif node.text == '#args' or node.text == '#lambda':
                     node.set_type(SymbolType).set_value(node.text)
                 else:
-                    pass
+                    check(False, '%s is not a regular pre-defined value.' % (node.text,))
             elif node.text.startswith(':'):
                 if node.text in Types.keys():
                     node = Types[node.text]
                 else:
-                    pass
+                    check(False, '%s is not a regular type.' % (node.text,))
             else:
                 node.set_type(SymbolType).set_value(node.text)
 
@@ -745,14 +745,14 @@ def Eval(node, env):
 
             retval = L_node
 
-        elif op == 'remove':
+        elif op == 'delete':
             L_node = Eval(L[0], env)
             I_node = Eval(L[1], env)
-            assert L_node.type is ListType, '(remove): 參數1 須為 :list 類型'
-            assert I_node.type is NumberType, '(remove): 參數索引 須為 :number 類型'
+            assert L_node.type is ListType, '(delete): 參數1 須為 :list 類型'
+            assert I_node.type is NumberType, '(delete): 參數索引 須為 :number 類型'
 
             i = int(I_node.value)
-            assert 1 <= i <= L_node.get_length(), '(remove): 索引值須在正確區間之內'
+            assert 1 <= i <= L_node.get_length(), '(delete): 索引值須在正確區間之內'
 
             L_node.sub_nodes.pop(i - 1)
 
@@ -816,6 +816,9 @@ def Eval(node, env):
             p = Eval(L[0], env)
             assert p.type is ListType, '(unicode): 參數1 須為 :list 類型'
             retval = CreateStringNode(''.join([chr(int(sub_node.value)) for sub_node in p.sub_nodes]))
+
+        elif op == 'string':
+            retval = CreateStringNode(str(Eval(L[0], env)))
 
         ##########
 
