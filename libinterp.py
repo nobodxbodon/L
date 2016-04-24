@@ -1,7 +1,6 @@
 # libinterp.py
 import re
 import os
-import math
 from decimal import Decimal, getcontext, ROUND_05UP
 
 getcontext().rounding = ROUND_05UP
@@ -19,15 +18,14 @@ meta_lambda = [
     'output',
     'apply',
     'quote',
+    'string',
     'import',
     'let',
     'eval',
     'type',
     'pass',
+    'trap',
     'assert',
-    'meta',
-    'lookup',
-    'defined',
     'exit',
 
     'get',
@@ -41,11 +39,8 @@ meta_lambda = [
     'or',
     'not',
 
-    'split',
-    'join',
     'encode',
     'decode',
-    'string',
 
     'gt',
     'lt',
@@ -53,21 +48,7 @@ meta_lambda = [
     'sub',
     'mul',
     'div',
-    'mod',
-    'floor',
-    'ceil',
     'trunc',
-    'round',
-    'exp',
-    'log',
-    'sqrt',
-    'sin',
-    'cos',
-    'tan',
-    'asin',
-    'acos',
-    'atan',
-    'number',
 ]
 
 class Node:
@@ -84,7 +65,7 @@ class Node:
         if self.type is not other.type:
             return False
         elif self.type is LambdaType:
-            return False
+            return self.get_expr() == other.get_expr()
         elif self.type is ListType:
             if self.get_length() != other.get_length():
                 return False
@@ -126,7 +107,23 @@ class Node:
         elif self.type is NumberType:
             self.expr = str(self.value)
         elif self.type is StringType:
-            self.expr = "'%s'" % (self.value.replace('\n', '\\n'), )
+            fragments = []
+            fragments.append("'")
+            for c in self.value:
+                if c == '"':
+                    fragments.append('\\0022')
+                elif c == "'":
+                    fragments.append('\\0027')
+                elif c == '\\':
+                    fragments.append('\\\\')
+                elif c.isprintable():
+                    fragments.append(c)
+                else:
+                    fragments.append('\\%s' % (hex(ord(c))[2:].zfill(4).upper(),))
+            fragments.append("'")
+
+            self.expr = ''.join(fragments)
+
         elif self.type is ErrorType:
             self.expr = str(self.value)
         elif self.type is NoneType:
@@ -136,7 +133,7 @@ class Node:
                 self.expr = '(lambda %s %s)' % (self[0].get_expr(), self[1].get_expr())
             else:
                 self.expr = self.value
-        elif self.type is EvalType:
+        elif self.type is ExprType:
             fragments = []
             for sub_node in self:
                 fragments.append(sub_node.get_expr())
@@ -213,7 +210,7 @@ class Env:
 
     def update(self, name, node):
         if name in self.items.keys():
-            if name == '_' or self.items[name].type is node.type:
+            if self.items[name].type is node.type:
                 self.items[name] = node
                 return True
             else:
@@ -236,7 +233,7 @@ def CreateTypeNode(type_string):
     return Node().set_type(TypeType).set_value(type_string)
 
 SymbolType = CreateTypeNode(':symbol')
-EvalType = CreateTypeNode(':eval')
+ExprType = CreateTypeNode(':expr')
 NumberType = CreateTypeNode(':number')
 StringType = CreateTypeNode(':string')
 BoolType = CreateTypeNode(':bool')
@@ -269,9 +266,9 @@ def CreateListNode(v):
     return Node().set_type(ListType).set_sub_nodes(v)
 
 def CreateEvalNode(v):
-    return Node().set_type(EvalType).set_sub_nodes(v)
+    return Node().set_type(ExprType).set_sub_nodes(v)
 
-def CreateErrorNode(s='error'):
+def CreateErrorNode(s='0'):
     return Node().set_type(ErrorType).set_value(s)
 
 def CreateBoolNode(b):
@@ -281,7 +278,7 @@ def CreateBoolNode(b):
         return NodeFalse
 
 def Lex(code_string):
-    p = r"""\(|\)|\[|\]|\{|\}|(?<=\s|\{|\(|\[|\]|\)|\})[^\(\[\]\)'"\s]+?(?=\s|\)|\]|\}|\(|\[|\{)|"(?:\\"|.)*?"|'(?:\\'|.)*?'|^.*$"""
+    p = r"""\(|\)|\[|\]|(?<=\s||\(|\[|\]|\)|)[^\(\[\]\)'"\s]+?(?=\s|\)|\]||\(|\[|)|"(?:\\"|.)*?"|'(?:\\'|.)*?'|^.*$"""
     tokens = re.findall(p, code_string)
     container = []
     for token in tokens:
@@ -317,12 +314,12 @@ def Lex(code_string):
             else:
                 char_container.append(c)
         else:
-            if c in ['(', '[', '{', '}', ']', ')', ' ', '"', "'", '\n']:
+            if c in ['(', '[', ']', ')', ' ', '"', "'", '\n']:
                 if len(char_container) != 0:
                     node_container.append(Node(''.join(char_container), token_ln, token_col))
                     char_container.clear()
 
-                if c in ['(', '[', '{', '}', ']', ')']:
+                if c in ['(', '[', ']', ')']:
                     node_container.append(Node(c, current_ln, current_col))
                 elif c == "'":
                     single_quote_mark = True
@@ -358,36 +355,22 @@ def Lex(code_string):
 def Validate(nodes):
     stack = Stack()
     for node in nodes:
-        if node.text in ['(', '[', '{']:
+        if node.text in ['(', '[']:
             stack.push(node)
-        elif node.text in [')', ']', '}']:
+        elif node.text in [')', ']']:
             check(stack.not_empty(), 'unexpected bracket.' + '%d:%d' % (node.ln, node.col))
             stack_node = stack.pop()
-            right_bracket = {'(':')', '[':']', '{':'}'}[stack_node.text]
+            right_bracket = {'(':')', '[':']'}[stack_node.text]
             check(right_bracket == node.text, 'brackets not match.' + '%d:%d' % (node.ln, node.col))
 
     if stack.not_empty():
+        node = stack.pop()
         check(False, "unexpected bracket." + '%d:%d' % (node.ln, node.col))
 
     return nodes
 
 def Clean(nodes):
-    container = []
-    skip = False
-    for node in nodes:
-        if node.text == '{':
-            skip = True
-            continue
-        elif node.text == '}':
-            skip = False
-            continue
-
-        if skip is True:
-            continue
-        else:
-            container.append(node)
-
-    return container
+    return nodes
 
 def Parse(nodes):
     Types = {
@@ -405,7 +388,7 @@ def Parse(nodes):
         node = nodes.pop(0)
 
         if node.text == '(':
-            stack.push(node.set_type(EvalType).set_value('()'))
+            stack.push(node.set_type(ExprType).set_value('()'))
             continue
         elif node.text == '[':
             stack.push(node.set_type(ListType).set_value('[]'))
@@ -425,16 +408,16 @@ def Parse(nodes):
             elif node.text.startswith('"') and node.text.endswith('"') or \
                  node.text.startswith("'") and node.text.endswith("'"):
                 node.set_type(StringType).set_value(node.text[1:-1])
-                replace_table = {
-                    '\\a': '\a',
-                    '\\b': '\b',
-                    '\\n': '\n',
-                    '\\r': '\r',
-                    '\\t': '\t',
-                }
-                for old, new in replace_table.items():
-                    node.value = node.value.replace(old, new)
+                node.value = node.value.replace('\\\\', '\\005c')
+                def convert(s):
+                    def _convert(o):
+                        if re.fullmatch(r'^\\[0-9a-fA-F]{4}$', o.group(0)) is not None:
+                            return chr(int(o.group(0)[1:], 16))
+                        else:
+                            check(False, 'wrong format, %s in %s' % (o.group(0), s.replace('\\005c', '\\')))
 
+                    return _convert
+                node.value = re.sub(r"\\[0-9a-zA-Z]{0,4}", convert(node.value), node.value)
 
             elif node.text.startswith('&'):
                 node.set_type(ErrorType).set_value(node.text)
@@ -469,7 +452,8 @@ def check(cond, msg):
         raise InterpError(msg)
     else:
         pass
-
+import_paths_stack = Stack()
+import_paths_stack.push(__file__)
 def Eval(node, env):
     retval = None
     node_type = node.type
@@ -485,7 +469,7 @@ def Eval(node, env):
     elif node_type is ListType:
         retval = CreateListNode([Eval(sub_node, env) for sub_node in node.sub_nodes])
 
-    elif node_type is EvalType:
+    elif node_type is ExprType:
         check(node.get_length() >= 1, 'error, in () should not be empty.')
 
         op_node = node.get_op_node()
@@ -587,24 +571,64 @@ def Eval(node, env):
             retval = Eval(CreateEvalNode(_L), env)
 
         elif op == 'quote':
-            retval = CreateStringNode(Eval(L[0], env).expr)
+            def quote(node):
+                # if node.type is SymbolType:
+                #     _node = env.lookup(node.value)
+                #     if _node is None:
+                #         return node.get_expr()
+                #     else:
+                #         return quote(_node, env)
+                # elif node.type is StringType:
+                if node.type is StringType:
+                    return '(decode %s)' % (CreateListNode([CreateNumberNode(ord(c)) for c in node.value]).get_expr(), )
+                elif node.type is LambdaType:
+                    if node.value in meta_lambda:
+                        return node.get_expr()
+                    else:
+                        return '(lambda %s %s)' % (node[0].get_expr(), quote(node[1]))
+                elif node.type is ExprType:
+                    fragments = []
+                    for sub_node in node.sub_nodes:
+                        fragments.append(quote(sub_node))
+                    return '(%s)' % (' '.join(fragments), )
+
+                elif node.type is ListType:
+                    fragments = []
+                    for sub_node in node.sub_nodes:
+                        fragments.append(quote(sub_node))
+                    return '[%s]' % (' '.join(fragments), )
+                else:
+                    return node.get_expr()
+
+            retval = CreateListNode([CreateStringNode(quote(sub_node)) for sub_node in L])
+
+        elif op == 'string':
+            retval = CreateStringNode(str(Eval(L[0], env)))
 
         elif op == 'import':
-            path = os.path.join(os.path.join(os.path.dirname(__file__), 'lib/'), L[0].value)
+            path = os.path.join(os.path.dirname(import_paths_stack.top()), L[0].value)
+
+            import_paths_stack.push(path)
 
             env0 = Env()
-            code = open(path, encoding='utf-8').read()
-            Eval(Parse(Clean(Validate(Lex('(progn %s)' % (code,))))), env0)
-            # Eval(Parse(Clean(Validate(Lex('%s' % (code,))))), env0)
+            try:
+                code = open(path, encoding='utf-8').read()
 
-            if len(L) == 2:
-                for k in env0.items.keys():
-                    env0.items[L[1].value+'-'+k] = env0.items[k]
-                    del env0.items[k]
+                Eval(Parse(Clean(Validate(Lex('(progn %s)' % (code,))))), env0)
+                if len(L) == 2:
+                    for k in env0.items.keys():
+                        env0.items[L[1].value+'-'+k] = env0.items[k]
+                        del env0.items[k]
 
-            env0.parent = env.parent
-            env.parent = env0
-            retval = NodeNone
+                env0.parent = env.parent
+                env.parent = env0
+                retval = NodeNone
+            except FileNotFoundError as e:
+                check(False, '(import) no such file.')
+            except Exception as e:
+                check(False, e)
+            finally:
+                import_paths_stack.pop()
 
         elif op == 'let':
             env0 = Env(env)
@@ -627,84 +651,29 @@ def Eval(node, env):
         elif op == 'pass':
             retval = NodeNone
 
+        elif op == 'trap':
+            pass
+
         elif op == 'assert':
             cond_node = Eval(L[0], env)
-            if len(L) == 2:
-                msg_node = Eval(L[1], env)
-            else:
-                msg_node = CreateStringNode('')
-
-            assert cond_node.type is BoolType, '(assert): 參數1 須為 :boolean 類型'
-            assert msg_node.type is StringType, '(assert): 參數2 須為 :string 類型'
-
-            if msg_node.value == '':
-                assert cond_node.value, '(assert): %s -> #false' % (L[0].get_expr(), )
-            else:
-                assert cond_node.value, '%s' % (msg_node.value, )
-
+            assert cond_node is NodeTrue, '%s' % (node.get_expr(), )
             retval = NodeNone
-
-        elif op == 'meta':
-            def meta(node, env):
-                if node.type is SymbolType:
-                    _node = env.lookup(node.value)
-                    if _node is None:
-                        return node.get_expr()
-                    else:
-                        return meta(_node, env)
-                elif node.type is StringType:
-                    return '(decode %s)' % (CreateListNode([CreateNumberNode(ord(c)) for c in node.value]).get_expr(), )
-                elif node.type is LambdaType:
-                    if node.value in meta_lambda:
-                        return node.get_expr()
-                    else:
-                        return '(lambda %s %s)' % (node[0].get_expr(), meta(node[1], node[2]))
-                elif node.type is EvalType:
-                    fragments = []
-                    for sub_node in node.sub_nodes:
-                        fragments.append(meta(sub_node, env))
-                    return '(%s)' % (' '.join(fragments), )
-
-                elif node.type is ListType:
-                    fragments = []
-                    for sub_node in node.sub_nodes:
-                        fragments.append(meta(sub_node, env))
-                    return '[%s]' % (' '.join(fragments), )
-                else:
-                    return node.get_expr()
-
-            lambda_node = Eval(L[0], env)
-            assert lambda_node.type is LambdaType, '(): 參數1 須為 :lambda 類型'
-            retval = CreateStringNode(meta(lambda_node, env))
-
-        elif op == 'lookup':
-            p = Eval(L[0], env)
-            check(p.type is StringType, '(lookup) need one :string as param.')
-            retval = env.lookup(p.value)
-            check(retval is not None, '(lookup) name %s undefined' % (p.value,))
-
-        elif op == 'defined':
-            p = Eval(L[0], env)
-            check(p.type is StringType, '(defined) need one :string as param.')
-            val = env.lookup(p.value)
-            if val is None:
-                retval = CreateBoolNode(False)
-            else:
-                retval = CreateBoolNode(True)
 
         elif op == 'exit':
             exit()
 
         ##########
-
+        #
         elif op == 'get':
             L_node = Eval(L[0], env)
             I_node = Eval(L[1], env)
-            assert L_node.type is ListType, '(obtain): 參數1 須為 :list 類型'
-            assert I_node.type is NumberType, '(obtain): 參數索引 須為 :number 類型'
+            assert L_node.type is ListType, '(get): 參數1 須為 :list 類型'
+            assert I_node.type is NumberType, '(get): 參數索引 須為 :number 類型'
 
             i = int(I_node.value)
-            assert 1 <= i <= L_node.get_length(), '(obtain): 索引值須大於等於1且小於等於列表長度'
+            if i < 0:
+                i = i + L_node.get_length() + 1
+            assert 1 <= i <= L_node.get_length(), '(get): 索引值須大於等於1且小於等於列表長度'
 
             retval = L_node[i - 1]
 
@@ -712,14 +681,14 @@ def Eval(node, env):
             L_node = Eval(L[0], env)
             I_node = Eval(L[1], env)
             V_node = Eval(L[2], env)
-            assert L_node.type is ListType, '(update): 參數1 須為 :list 類型'
-            assert I_node.type is NumberType, '(update): 參數索引 須為 :number 類型'
+            assert L_node.type is ListType, '(set): 參數1 須為 :list 類型'
+            assert I_node.type is NumberType, '(set): 參數索引 須為 :number 類型'
 
             i = int(I_node.value)
-            assert 1 <= i <= L_node.get_length(), '(update): 索引值須大於等於1且小於等於列表長度'
+            assert 1 <= i <= L_node.get_length(), '(set): 索引值須大於等於1且小於等於列表長度'
 
             v = L_node[i - 1]
-            assert v.type is V_node.type, '(update): 新值須為 %s 類型' % (str(v.type), )
+            assert v.type is V_node.type, '(set): 新值須為 %s 類型' % (str(v.type), )
 
             L_node[i - 1] = V_node
 
@@ -734,14 +703,14 @@ def Eval(node, env):
             assert L_node is not V_node, '(insert): 避免循環引用'
 
             i = int(I_node.value)
-            assert i >= 1, '(insert): 索引值須大於等於 1'
+            assert -L_node.get_length()-1 <= i <= -1 or 1 <= i <= L_node.get_length()+1, '(insert): 索引值越界'
 
-            span = i - L_node.get_length() - 1
-            while span > 0:
-                L_node.sub_nodes.insert(L_node.get_length(), NodeNone)
-                span -= 1
+            if i < 0:
+                i = i + L_node.get_length() + 1
+            else:
+                i = i - 1
 
-            L_node.sub_nodes.insert(i - 1, V_node)
+            L_node.sub_nodes.insert(i, V_node)
 
             retval = L_node
 
@@ -752,6 +721,8 @@ def Eval(node, env):
             assert I_node.type is NumberType, '(delete): 參數索引 須為 :number 類型'
 
             i = int(I_node.value)
+            if i < 0:
+                i = i + L_node.get_length() + 1
             assert 1 <= i <= L_node.get_length(), '(delete): 索引值須在正確區間之內'
 
             L_node.sub_nodes.pop(i - 1)
@@ -770,43 +741,6 @@ def Eval(node, env):
 
         ##########
 
-        elif op == 'and':
-            for i, p in enumerate(L):
-                retval_node = Eval(p, env)
-                assert retval_node.type is BoolType, '(and): 參數%d 須為 :boolean 類型' % (i + 1, )
-
-                if retval_node.value is False:
-                    retval = CreateBoolNode(False)
-                    break
-            else:
-                retval = CreateBoolNode(True)
-
-        elif op == 'or':
-            for i, p in enumerate(L):
-                retval_node = Eval(p, env)
-                assert retval_node.type is BoolType, '(or): 參數%d 須為 :boolean 類型' % (i + 1, )
-
-                if retval_node.value is True:
-                    retval = CreateBoolNode(True)
-                    break
-            else:
-                retval = CreateBoolNode(False)
-
-        elif op == 'not':
-            p = Eval(L[0], env)
-            assert p.type is BoolType, '(not): 參數1 須為 :boolean 類型'
-            retval = CreateBoolNode(not p.value)
-
-        ##########
-        elif op == 'split':
-            retval = CreateListNode([CreateStringNode(char) for char in Eval(L[0], env).value])
-
-        elif op == 'join':
-            s = ''
-            for _s in Eval(L[0], env).sub_nodes:
-                s += _s.value
-            retval = CreateStringNode(s)
-
         elif op == 'encode':
             p = Eval(L[0], env)
             assert p.type is StringType, '(unicode): 參數1 須為 :string 類型'
@@ -817,38 +751,14 @@ def Eval(node, env):
             assert p.type is ListType, '(unicode): 參數1 須為 :list 類型'
             retval = CreateStringNode(''.join([chr(int(sub_node.value)) for sub_node in p.sub_nodes]))
 
-        elif op == 'string':
-            retval = CreateStringNode(str(Eval(L[0], env)))
-
         ##########
-
-        elif op == 'ceil':
-            p = Eval(L[0], env)
-            assert p.type is NumberType, '(ceil): 參數1 須為 :number 類型'
-
-            retval = CreateNumberNode(math.ceil(p.value))
-
-        elif op == 'floor':
-            p = Eval(L[0], env)
-            assert p.type is NumberType, '(floor): 參數1 須為 :number 類型'
-
-            retval = CreateNumberNode(math.floor(p.value))
-
-        elif op == 'round':
-            p = Eval(L[0], env)
-            n = Eval(L[1], env)
-            assert p.type is NumberType, '(round): 參數1 須為 :number 類型'
-            assert n.type is NumberType, '(round): 參數1 須為 :number 類型'
-
-            retval = CreateNumberNode(round(p.value, int(n.value)))
-
         elif op == 'trunc':
             p = Eval(L[0], env)
             assert p.type is NumberType, '(trunc): 參數1 須為 :number 類型'
 
             retval = CreateNumberNode(int(p.value))
 
-        elif op in ['add', 'sub', 'mul', 'div', 'mod', 'exp', 'log']:
+        elif op in ['add', 'sub', 'mul', 'div']:
             p1 = Eval(L[0], env)
             p2 = Eval(L[1], env)
 
@@ -859,25 +769,7 @@ def Eval(node, env):
                 'sub': lambda a, b: a - b,
                 'mul': lambda a, b: a * b,
                 'div': lambda a, b: a / b,
-                'mod': lambda a, b: a % b,
-                'exp': lambda a, b: a ** b,
-                'log': lambda a, b: math.log(a, b),
             }[op](p1.value, p2.value))
-
-        elif op in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sqrt']:
-            p = Eval(L[0], env)
-
-            assert p.type is NumberType, '(%s): 參數須為 :number 類型' % (op, )
-
-            retval = CreateNumberNode({
-                'sin': math.sin,
-                'cos': math.cos,
-                'tan': math.tan,
-                'asin': math.asin,
-                'acos': math.acos,
-                'atan': math.atan,
-                'sqrt': math.sqrt,
-            }[op](p.value))
 
         elif op in ['gt', 'lt']:
             p1 = Eval(L[0], env)
@@ -890,8 +782,6 @@ def Eval(node, env):
                 'lt': lambda a, b: a < b,
             }[op](p1.value, p2.value))
 
-        elif op == 'number':
-            retval = CreateNumberNode(Eval(L[0], env))
         else:
             pass
     else:
@@ -913,11 +803,11 @@ def Interp():
                     break
                 else:
                     retval = Eval(Parse(Clean(Validate(Lex(s)))), env)
-                    env.update('_', retval)
+                    env.define('_', retval)
 
                     print('[REPL]>>> ', retval.get_expr(), sep='')
 
-            except InterpError as err:
+            except (InterpError, AssertionError) as err:
                 print(err)
                 continue
 
